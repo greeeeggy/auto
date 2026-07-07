@@ -77,6 +77,7 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GH_TOKEN }}
       run: |
-        gh workflow run timer.yml --repo greeeeggy/zenquant-automation
+        gh workflow run timer.yml --repo ${{ github.repository }}
         echo "timer.yml triggered — next injection in ~3 hours."
+
 
