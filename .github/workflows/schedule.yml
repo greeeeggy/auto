@@ -1,0 +1,82 @@
+name: Zenquant Auto-Inject
+
+on:
+  schedule:
+    # Safety net only: fires once daily at midnight UTC.
+    # The real 3-hour rolling schedule is driven by the Cloudflare Worker (see cloudflare-worker/).
+    # If the Worker chain ever breaks, this guarantees the job runs at least once per day.
+    - cron: '0 0 * * *'
+  
+  # This allows you to manually click a "Run workflow" button on GitHub to test it
+  workflow_dispatch: 
+
+jobs:
+  run-automation:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install Dependencies
+      run: npm install
+
+    - name: Get Playwright version
+      id: playwright-version
+      run: echo "PLAYWRIGHT_VERSION=$(node -e "console.log(require('./package.json').devDependencies.playwright)")" >> $GITHUB_ENV
+
+    - name: Cache Playwright Browsers
+      id: playwright-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ env.PLAYWRIGHT_VERSION }}
+
+    - name: Install Playwright Browsers
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
+      run: npx playwright install chromium --with-deps
+
+    - name: Install Playwright System Dependencies
+      if: steps.playwright-cache.outputs.cache-hit == 'true'
+      run: npx playwright install-deps chromium
+
+    - name: Restore session state cache
+      uses: actions/cache@v4
+      with:
+        path: storageState.json
+        # Key rotates per run so we always save the freshest session
+        key: session-state-v2-${{ github.run_id }}
+        restore-keys: session-state-v2-
+
+    - name: Run Injection Script
+      env:
+        ZENQUANT_PHONE: ${{ secrets.ZENQUANT_PHONE }}
+        ZENQUANT_PASSWORD: ${{ secrets.ZENQUANT_PASSWORD }}
+      run: node inject.js
+
+    - name: Upload debug screenshots
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-screenshots
+        path: "*.png"
+        if-no-files-found: ignore
+
+    # Fire the 3-hour relay: timer.yml sleeps for 3h then re-triggers this workflow.
+    # This creates a true rolling interval — next run starts exactly 3h after THIS run ends.
+    # Requires GH_TOKEN secret (fine-grained PAT with Actions: Read & Write).
+    - name: Fire 3-hour timer
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      run: |
+        gh workflow run timer.yml --repo greeeeggy/zenquant-automation
+        echo "timer.yml triggered — next injection in ~3 hours."
+
